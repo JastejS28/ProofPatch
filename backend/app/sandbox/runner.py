@@ -139,3 +139,301 @@ async def run_in_sandbox(
         workspace,
         command,
     )
+
+
+def _docker_run_differential_sync(
+    baseline_workspace: Path,
+    candidate_workspace: Path,
+    test_workspace: Path,
+    command: list[str],
+) -> SandboxResult:
+
+    baseline_workspace = (
+        baseline_workspace.resolve()
+    )
+
+    candidate_workspace = (
+        candidate_workspace.resolve()
+    )
+
+    test_workspace = (
+        test_workspace.resolve()
+    )
+
+    docker_command = [
+        "docker",
+        "run",
+        "--rm",
+
+        "--network",
+        "none",
+
+        "--cpus",
+        str(
+            settings.sandbox_cpu_limit
+        ),
+
+        "--memory",
+        f"{settings.sandbox_memory_mb}m",
+
+        "--pids-limit",
+        str(
+            settings.sandbox_pids_limit
+        ),
+
+        "--read-only",
+
+        "--cap-drop",
+        "ALL",
+
+        "--security-opt",
+        "no-new-privileges",
+
+        "--user",
+        "65534:65534",
+
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=256m",
+
+        "--mount",
+        (
+            "type=bind,"
+            f"source={baseline_workspace},"
+            "target=/baseline,"
+            "readonly"
+        ),
+
+        "--mount",
+        (
+            "type=bind,"
+            f"source={candidate_workspace},"
+            "target=/candidate,"
+            "readonly"
+        ),
+
+        "--mount",
+        (
+            "type=bind,"
+            f"source={test_workspace},"
+            "target=/tests,"
+            "readonly"
+        ),
+
+        "--workdir",
+        "/tests",
+
+        settings.sandbox_image,
+
+        *command,
+    ]
+
+    started = time.perf_counter()
+
+    try:
+        result = subprocess.run(
+            docker_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=(
+                settings
+                .validation_timeout_seconds
+            ),
+            check=False,
+        )
+
+    except subprocess.TimeoutExpired as exc:
+
+        duration_ms = int(
+            (
+                time.perf_counter()
+                - started
+            )
+            * 1000
+        )
+
+        return SandboxResult(
+            exit_code=-1,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+            duration_ms=duration_ms,
+            timed_out=True,
+        )
+
+    except FileNotFoundError as exc:
+        raise SandboxError(
+            "Docker is not installed or "
+            "is not available on PATH."
+        ) from exc
+
+    duration_ms = int(
+        (
+            time.perf_counter()
+            - started
+        )
+        * 1000
+    )
+
+    return SandboxResult(
+        exit_code=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        duration_ms=duration_ms,
+        timed_out=False,
+    )
+
+
+async def run_differential_in_sandbox(
+    baseline_workspace: Path,
+    candidate_workspace: Path,
+    test_workspace: Path,
+    command: list[str],
+) -> SandboxResult:
+
+    return await asyncio.to_thread(
+        _docker_run_differential_sync,
+        baseline_workspace,
+        candidate_workspace,
+        test_workspace,
+        command,
+    )
+
+
+def _docker_run_benchmark_sync(
+    workspace: Path,
+    harness_workspace: Path,
+    command: list[str],
+) -> SandboxResult:
+
+    workspace = workspace.resolve()
+    harness_workspace = (
+        harness_workspace.resolve()
+    )
+
+    docker_command = [
+        "docker",
+        "run",
+        "--rm",
+
+        "--network",
+        "none",
+
+        "--cpus",
+        str(
+            settings.sandbox_cpu_limit
+        ),
+
+        "--memory",
+        f"{settings.sandbox_memory_mb}m",
+
+        "--pids-limit",
+        str(
+            settings.sandbox_pids_limit
+        ),
+
+        "--read-only",
+
+        "--cap-drop",
+        "ALL",
+
+        "--security-opt",
+        "no-new-privileges",
+
+        "--user",
+        "65534:65534",
+
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=256m",
+
+        "--mount",
+        (
+            "type=bind,"
+            f"source={workspace},"
+            "target=/workspace,"
+            "readonly"
+        ),
+
+        "--mount",
+        (
+            "type=bind,"
+            f"source={harness_workspace},"
+            "target=/harness,"
+            "readonly"
+        ),
+
+        "--workdir",
+        "/harness",
+
+        settings.sandbox_image,
+
+        *command,
+    ]
+
+    started = time.perf_counter()
+
+    try:
+        result = subprocess.run(
+            docker_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=(
+                settings
+                .benchmark_timeout_seconds
+            ),
+            check=False,
+        )
+
+    except subprocess.TimeoutExpired as exc:
+
+        duration_ms = int(
+            (
+                time.perf_counter()
+                - started
+            )
+            * 1000
+        )
+
+        return SandboxResult(
+            exit_code=-1,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+            duration_ms=duration_ms,
+            timed_out=True,
+        )
+
+    except FileNotFoundError as exc:
+        raise SandboxError(
+            "Docker is not installed or "
+            "is not available on PATH."
+        ) from exc
+
+    duration_ms = int(
+        (
+            time.perf_counter()
+            - started
+        )
+        * 1000
+    )
+
+    return SandboxResult(
+        exit_code=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        duration_ms=duration_ms,
+        timed_out=False,
+    )
+
+
+async def run_benchmark_in_sandbox(
+    workspace: Path,
+    harness_workspace: Path,
+    command: list[str],
+) -> SandboxResult:
+
+    return await asyncio.to_thread(
+        _docker_run_benchmark_sync,
+        workspace,
+        harness_workspace,
+        command,
+    )

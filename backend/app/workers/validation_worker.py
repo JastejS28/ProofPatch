@@ -5,8 +5,15 @@ from uuid import UUID
 from app.db.session import (
     AsyncSessionLocal,
 )
+from app.workers.benchmark_worker import (
+    run_benchmark_workflow,
+)
 from app.domain.run_status import (
     RunStatus,
+)
+from app.sandbox.differential import (
+    DifferentialTestError,
+    run_differential_tests,
 )
 from app.sandbox.snapshots import (
     cleanup_validation_snapshots,
@@ -18,6 +25,7 @@ from app.sandbox.validator import (
 from app.services.run_service import (
     fail_run,
     get_run,
+    save_differential_validation_result,
     save_validation_result,
     transition_run,
 )
@@ -32,6 +40,7 @@ async def run_validation_workflow(
     async with AsyncSessionLocal() as db:
 
         try:
+            # 1. Load run
             run = await get_run(
                 db=db,
                 run_id=run_id,
@@ -40,6 +49,7 @@ async def run_validation_workflow(
             if run is None:
                 return
 
+            # 2. Read current state
             state = dict(
                 run.state_json
             )
@@ -49,6 +59,7 @@ async def run_validation_workflow(
                 {},
             )
 
+            # 3. Candidate patch must exist
             if not changes:
                 await fail_run(
                     db=db,
@@ -60,6 +71,8 @@ async def run_validation_workflow(
                 )
                 return
 
+            # 4. Candidate must have passed
+            #    static policy first
             policy = changes.get(
                 "policy",
                 {},
@@ -79,6 +92,7 @@ async def run_validation_workflow(
                 )
                 return
 
+            # 5. Enter VALIDATING stage
             await transition_run(
                 db=db,
                 run_id=run_id,
@@ -89,6 +103,7 @@ async def run_validation_workflow(
                 ),
             )
 
+            # 6. Get workspace and analysis info
             workspace = Path(
                 state["workspace_ref"]
             )
@@ -106,19 +121,9 @@ async def run_validation_workflow(
                 )
             )
 
-            if not test_files:
-                await fail_run(
-                    db=db,
-                    run_id=run_id,
-                    message=(
-                        "No relevant existing tests "
-                        "were found. Differential "
-                        "testing fallback is not "
-                        "implemented yet."
-                    ),
-                )
-                return
-
+            # 7. Create isolated baseline and
+            #    candidate snapshots BEFORE
+            #    choosing validation strategy
             snapshots = (
                 create_validation_snapshots(
                     workspace=workspace,
@@ -136,74 +141,193 @@ async def run_validation_workflow(
                 )
             )
 
-            result = await run_existing_tests(
-                baseline_workspace=(
-                    snapshots.baseline
-                ),
-                candidate_workspace=(
-                    snapshots.candidate
-                ),
-                test_files=test_files,
-            )
+            # ==================================
+            # PATH A:
+            # EXISTING REPOSITORY TESTS
+            # ==================================
 
-            baseline_data = {
-                "exit_code":
-                    result.baseline.exit_code,
-                "stdout":
-                    result.baseline.stdout,
-                "stderr":
-                    result.baseline.stderr,
-                "duration_ms":
-                    result.baseline.duration_ms,
-                "timed_out":
-                    result.baseline.timed_out,
-            }
+            if test_files:
 
-            candidate_data = {
-                "exit_code":
-                    result.candidate.exit_code,
-                "stdout":
-                    result.candidate.stdout,
-                "stderr":
-                    result.candidate.stderr,
-                "duration_ms":
-                    result.candidate.duration_ms,
-                "timed_out":
-                    result.candidate.timed_out,
-            }
+                result = (
+                    await run_existing_tests(
+                        baseline_workspace=(
+                            snapshots.baseline
+                        ),
+                        candidate_workspace=(
+                            snapshots.candidate
+                        ),
+                        test_files=(
+                            test_files
+                        ),
+                    )
+                )
 
-            await save_validation_result(
+                baseline_data = {
+                    "exit_code":
+                        result.baseline.exit_code,
+
+                    "stdout":
+                        result.baseline.stdout,
+
+                    "stderr":
+                        result.baseline.stderr,
+
+                    "duration_ms":
+                        result.baseline.duration_ms,
+
+                    "timed_out":
+                        result.baseline.timed_out,
+                }
+
+                candidate_data = {
+                    "exit_code":
+                        result.candidate.exit_code,
+
+                    "stdout":
+                        result.candidate.stdout,
+
+                    "stderr":
+                        result.candidate.stderr,
+
+                    "duration_ms":
+                        result.candidate.duration_ms,
+
+                    "timed_out":
+                        result.candidate.timed_out,
+                }
+
+                # Persist correctness evidence
+                await save_validation_result(
+                    db=db,
+                    run_id=run_id,
+                    iteration=1,
+                    baseline_result=(
+                        baseline_data
+                    ),
+                    candidate_result=(
+                        candidate_data
+                    ),
+                )
+
+                # Baseline itself must be healthy
+                if not result.baseline_passed:
+                    await fail_run(
+                        db=db,
+                        run_id=run_id,
+                        message=(
+                            "Baseline relevant "
+                            "tests did not pass."
+                        ),
+                    )
+                    return
+
+                # Candidate must preserve tests
+                if not result.candidate_passed:
+                    await fail_run(
+                        db=db,
+                        run_id=run_id,
+                        message=(
+                            "Candidate failed "
+                            "correctness validation."
+                        ),
+                    )
+                    return
+
+            # ==================================
+            # PATH B:
+            # NO TESTS → HYPOTHESIS FALLBACK
+            # ==================================
+
+            else:
+
+                differential = (
+                    await run_differential_tests(
+                        baseline_workspace=(
+                            snapshots.baseline
+                        ),
+                        candidate_workspace=(
+                            snapshots.candidate
+                        ),
+                        target_file=(
+                            run.target_file
+                        ),
+                        target_function=(
+                            run.target_function
+                        ),
+                        source=(
+                            changes[
+                                "original_function"
+                            ]
+                        ),
+                    )
+                )
+
+                differential_data = {
+                    "exit_code":
+                        differential
+                        .result
+                        .exit_code,
+
+                    "stdout":
+                        differential
+                        .result
+                        .stdout,
+
+                    "stderr":
+                        differential
+                        .result
+                        .stderr,
+
+                    "duration_ms":
+                        differential
+                        .result
+                        .duration_ms,
+
+                    "timed_out":
+                        differential
+                        .result
+                        .timed_out,
+                }
+
+                # Persist generated-test evidence
+                await (
+                    save_differential_validation_result(
+                        db=db,
+                        run_id=run_id,
+                        iteration=1,
+                        result=(
+                            differential_data
+                        ),
+                    )
+                )
+
+                if not differential.passed:
+                    await fail_run(
+                        db=db,
+                        run_id=run_id,
+                        message=(
+                            "Candidate failed "
+                            "Hypothesis differential "
+                            "testing."
+                        ),
+                    )
+                    return
+
+                await run_benchmark_workflow(
+          run_id
+             )
+
+        except DifferentialTestError as exc:
+
+            await fail_run(
                 db=db,
                 run_id=run_id,
-                iteration=1,
-                baseline_result=baseline_data,
-                candidate_result=candidate_data,
+                message=(
+                    "Differential testing could "
+                    "not be constructed: "
+                    f"{exc}"
+                ),
             )
-
-            if not result.baseline_passed:
-                await fail_run(
-                    db=db,
-                    run_id=run_id,
-                    message=(
-                        "Baseline relevant tests "
-                        "did not pass."
-                    ),
-                )
-                return
-
-            if not result.candidate_passed:
-                await fail_run(
-                    db=db,
-                    run_id=run_id,
-                    message=(
-                        "Candidate failed "
-                        "correctness validation."
-                    ),
-                )
-                return
-
-            # Next milestone:
-            # BENCHMARKING.
 
         except Exception as exc:
 

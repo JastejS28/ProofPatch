@@ -11,6 +11,9 @@ from app.models.run import Run
 from app.models.run_event import RunEvent
 from app.models.validation import Validation
 from app.schemas.run import RunCreate
+from app.models.benchmark import (
+    Benchmark,
+)
 from app.models.hypothesis import (
     Hypothesis,
 )
@@ -715,6 +718,228 @@ async def save_validation_result(
 
     await db.commit()
     await db.refresh(run)
+
+    return run
+
+
+async def save_differential_validation_result(
+    db: AsyncSession,
+    run_id: UUID,
+    iteration: int,
+    result: dict,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    passed = (
+        not result["timed_out"]
+        and result["exit_code"] == 0
+    )
+
+    validation_row = Validation(
+        run_id=run_id,
+        iteration=iteration,
+        stage="differential_tests",
+        status=(
+            "PASS"
+            if passed
+            else "FAIL"
+        ),
+        stdout_ref=(
+            result["stdout"][-8000:]
+        ),
+        duration_ms=(
+            result["duration_ms"]
+        ),
+    )
+
+    db.add(
+        validation_row
+    )
+
+    state = dict(
+        run.state_json
+    )
+
+    state["validation"] = {
+        "strategy":
+            "hypothesis_differential",
+
+        "differential": {
+            "passed":
+                passed,
+            **result,
+        },
+
+        "correctness_passed":
+            passed,
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "VALIDATION_COMPLETED"
+        ),
+        payload_json={
+            "strategy":
+                "hypothesis_differential",
+            "correctness_passed":
+                passed,
+        },
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+
+    await db.refresh(
+        run
+    )
+
+    return run
+
+
+async def save_benchmark_result(
+    db: AsyncSession,
+    run_id: UUID,
+    iteration: int,
+    baseline_result: dict,
+    candidate_result: dict,
+    threshold_percent: float,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    baseline_median = float(
+        baseline_result[
+            "median_seconds"
+        ]
+    )
+
+    candidate_median = float(
+        candidate_result[
+            "median_seconds"
+        ]
+    )
+
+    if baseline_median <= 0:
+        raise ValueError(
+            "Baseline benchmark median "
+            "must be greater than zero."
+        )
+
+    improvement_percent = (
+        (
+            baseline_median
+            - candidate_median
+        )
+        / baseline_median
+        * 100.0
+    )
+
+    passed = (
+        improvement_percent
+        >= threshold_percent
+    )
+
+    benchmark_row = Benchmark(
+        run_id=run_id,
+        iteration=iteration,
+        baseline_median_seconds=(
+            baseline_median
+        ),
+        candidate_median_seconds=(
+            candidate_median
+        ),
+        improvement_percent=(
+            improvement_percent
+        ),
+        threshold_percent=(
+            threshold_percent
+        ),
+        passed=passed,
+    )
+
+    db.add(
+        benchmark_row
+    )
+
+    state = dict(
+        run.state_json
+    )
+
+    state["benchmark"] = {
+        "iteration":
+            iteration,
+
+        "baseline": {
+            **baseline_result,
+        },
+
+        "candidate": {
+            **candidate_result,
+        },
+
+        "improvement_percent":
+            improvement_percent,
+
+        "threshold_percent":
+            threshold_percent,
+
+        "passed":
+            passed,
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "BENCHMARK_COMPLETED"
+        ),
+        payload_json={
+            "baseline_median_seconds":
+                baseline_median,
+
+            "candidate_median_seconds":
+                candidate_median,
+
+            "improvement_percent":
+                improvement_percent,
+
+            "threshold_percent":
+                threshold_percent,
+
+            "passed":
+                passed,
+        },
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+
+    await db.refresh(
+        run
+    )
 
     return run
 

@@ -1,5 +1,8 @@
 from app.core.config import settings
 from app.llm.base import LLMProvider
+from app.llm.fallback_provider import (
+    FallbackLLMProvider,
+)
 from app.llm.gemini_provider import (
     GeminiProvider,
 )
@@ -9,6 +12,7 @@ from app.llm.ollama_provider import (
 
 
 def get_llm_provider() -> LLMProvider:
+
     provider = (
         settings.llm_provider
         .strip()
@@ -21,6 +25,13 @@ def get_llm_provider() -> LLMProvider:
     if provider == "gemini":
         return GeminiProvider()
 
+    if provider == "gemini_ollama":
+        return FallbackLLMProvider(
+            primary=GeminiProvider(),
+            fallback=OllamaProvider(),
+        )
+
     raise RuntimeError(
-        f"Unsupported LLM provider: {provider}"
+        "Unsupported LLM provider: "
+        f"{provider}"
     )
