@@ -248,3 +248,20 @@ def _clean_replacement_source(
     ).strip()
 
     return cleaned
+
+
+def restore_original_function(
+    workspace: Path,
+    target_file: str,
+    target_function: str,
+    original_function: str,
+) -> None:
+
+    apply_function_replacement(
+        workspace=workspace,
+        target_file=target_file,
+        target_function=target_function,
+        replacement_source=(
+            original_function
+        ),
+    )

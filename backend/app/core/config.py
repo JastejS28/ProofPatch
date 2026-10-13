@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     performance_threshold_percent: float = 10.0
 
     validation_timeout_seconds: int = 120
+    # -------------------------
+# Retry policy
+# -------------------------
+
+    max_coder_attempts: int = 2
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",

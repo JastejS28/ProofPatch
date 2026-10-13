@@ -4,19 +4,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.approval import Approval
-from app.models.hypothesis import Hypothesis
 from app.domain.run_status import RunStatus
+from app.models.approval import Approval
+from app.models.benchmark import Benchmark
+from app.models.hypothesis import Hypothesis
 from app.models.run import Run
 from app.models.run_event import RunEvent
 from app.models.validation import Validation
 from app.schemas.run import RunCreate
-from app.models.benchmark import (
-    Benchmark,
-)
-from app.models.hypothesis import (
-    Hypothesis,
-)
 
 
 def build_initial_state(
@@ -28,7 +23,9 @@ def build_initial_state(
         "repo_url": str(payload.repo_url),
         "target_file": payload.target_file,
         "target_function": payload.target_function,
-        "problem_description": payload.problem_description,
+        "problem_description": (
+            payload.problem_description
+        ),
 
         "status": RunStatus.QUEUED.value,
         "current_step": RunStatus.QUEUED.value,
@@ -40,12 +37,18 @@ def build_initial_state(
         "hypotheses": [],
 
         "selected_hypothesis_id": None,
-        "iteration_count": 0,
 
+        # Coder retry state
+        "iteration_count": 0,
+        "attempt_history": [],
+        "retry_feedback": None,
+
+        # Current attempt evidence
         "changes": {},
         "validation": {},
         "benchmark": {},
         "verification": {},
+
         "review": {},
         "approvals": {},
         "pr": {},
@@ -64,6 +67,7 @@ async def create_run(
     db: AsyncSession,
     payload: RunCreate,
 ) -> Run:
+
     run_id = uuid.uuid4()
 
     state = build_initial_state(
@@ -73,18 +77,32 @@ async def create_run(
 
     run = Run(
         id=run_id,
-        repo_url=str(payload.repo_url),
-        target_file=payload.target_file,
-        target_function=payload.target_function,
-        problem_description=payload.problem_description,
-        status=RunStatus.QUEUED.value,
-        current_step=RunStatus.QUEUED.value,
+        repo_url=str(
+            payload.repo_url
+        ),
+        target_file=(
+            payload.target_file
+        ),
+        target_function=(
+            payload.target_function
+        ),
+        problem_description=(
+            payload.problem_description
+        ),
+        status=(
+            RunStatus.QUEUED.value
+        ),
+        current_step=(
+            RunStatus.QUEUED.value
+        ),
         state_json=state,
     )
 
     event = RunEvent(
         run_id=run_id,
-        event_type=RunStatus.QUEUED.value,
+        event_type=(
+            RunStatus.QUEUED.value
+        ),
         payload_json={
             "message": "Run created",
         },
@@ -103,13 +121,16 @@ async def get_run(
     db: AsyncSession,
     run_id: UUID,
 ) -> Run | None:
+
     result = await db.execute(
         select(Run).where(
             Run.id == run_id
         )
     )
 
-    return result.scalar_one_or_none()
+    return (
+        result.scalar_one_or_none()
+    )
 
 
 async def transition_run(
@@ -118,6 +139,7 @@ async def transition_run(
     status: RunStatus,
     message: str,
 ) -> Run | None:
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -127,12 +149,21 @@ async def transition_run(
         return None
 
     run.status = status.value
-    run.current_step = status.value
+    run.current_step = (
+        status.value
+    )
 
-    state = dict(run.state_json)
+    state = dict(
+        run.state_json
+    )
 
-    state["status"] = status.value
-    state["current_step"] = status.value
+    state["status"] = (
+        status.value
+    )
+
+    state["current_step"] = (
+        status.value
+    )
 
     run.state_json = state
 
@@ -156,10 +187,12 @@ async def list_run_events(
     db: AsyncSession,
     run_id: UUID,
 ) -> list[RunEvent]:
+
     result = await db.execute(
         select(RunEvent)
         .where(
-            RunEvent.run_id == run_id
+            RunEvent.run_id
+            == run_id
         )
         .order_by(
             RunEvent.timestamp.asc(),
@@ -167,7 +200,9 @@ async def list_run_events(
         )
     )
 
-    return list(result.scalars().all())
+    return list(
+        result.scalars().all()
+    )
 
 
 async def save_repository_analysis(
@@ -177,6 +212,7 @@ async def save_repository_analysis(
     repository_summary: dict,
     purity_check: dict,
 ) -> Run | None:
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -185,11 +221,21 @@ async def save_repository_analysis(
     if run is None:
         return None
 
-    state = dict(run.state_json)
+    state = dict(
+        run.state_json
+    )
 
-    state["workspace_ref"] = workspace_ref
-    state["repository_summary"] = repository_summary
-    state["purity_check"] = purity_check
+    state["workspace_ref"] = (
+        workspace_ref
+    )
+
+    state["repository_summary"] = (
+        repository_summary
+    )
+
+    state["purity_check"] = (
+        purity_check
+    )
 
     run.state_json = state
 
@@ -204,6 +250,7 @@ async def fail_run(
     run_id: UUID,
     message: str,
 ) -> Run | None:
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -212,10 +259,17 @@ async def fail_run(
     if run is None:
         return None
 
-    run.status = RunStatus.FAILED.value
-    run.current_step = RunStatus.FAILED.value
+    run.status = (
+        RunStatus.FAILED.value
+    )
 
-    state = dict(run.state_json)
+    run.current_step = (
+        RunStatus.FAILED.value
+    )
+
+    state = dict(
+        run.state_json
+    )
 
     errors = list(
         state.get(
@@ -230,15 +284,23 @@ async def fail_run(
         }
     )
 
-    state["status"] = RunStatus.FAILED.value
-    state["current_step"] = RunStatus.FAILED.value
+    state["status"] = (
+        RunStatus.FAILED.value
+    )
+
+    state["current_step"] = (
+        RunStatus.FAILED.value
+    )
+
     state["errors"] = errors
 
     run.state_json = state
 
     event = RunEvent(
         run_id=run_id,
-        event_type=RunStatus.FAILED.value,
+        event_type=(
+            RunStatus.FAILED.value
+        ),
         payload_json={
             "message": message,
         },
@@ -257,6 +319,7 @@ async def save_hypotheses(
     run_id: UUID,
     hypotheses: list[dict],
 ) -> Run | None:
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -265,19 +328,28 @@ async def save_hypotheses(
     if run is None:
         return None
 
-    stored_hypotheses: list[dict] = []
+    stored_hypotheses: list[
+        dict
+    ] = []
 
     for item in hypotheses:
+
         hypothesis = Hypothesis(
             run_id=run_id,
-            summary=item["summary"],
-            mechanism=item["mechanism"],
-            expected_effect=item[
-                "expected_effect"
-            ],
-            trade_offs=item[
-                "trade_offs"
-            ],
+            summary=(
+                item["summary"]
+            ),
+            mechanism=(
+                item["mechanism"]
+            ),
+            expected_effect=(
+                item[
+                    "expected_effect"
+                ]
+            ),
+            trade_offs=(
+                item["trade_offs"]
+            ),
             selected=False,
             status="PROPOSED",
         )
@@ -291,16 +363,26 @@ async def save_hypotheses(
                 "id": str(
                     hypothesis.id
                 ),
+
                 "summary":
                     hypothesis.summary,
+
                 "mechanism":
                     hypothesis.mechanism,
+
                 "expected_effect":
-                    hypothesis.expected_effect,
+                    hypothesis
+                    .expected_effect,
+
                 "trade_offs":
-                    hypothesis.trade_offs,
-                "selected": False,
-                "status": "PROPOSED",
+                    hypothesis
+                    .trade_offs,
+
+                "selected":
+                    False,
+
+                "status":
+                    "PROPOSED",
             }
         )
 
@@ -363,10 +445,13 @@ async def save_hypotheses(
             .value
         ),
         payload_json={
-            "message":
-                "Optimization hypotheses generated.",
-            "count":
-                len(stored_hypotheses),
+            "message": (
+                "Optimization hypotheses "
+                "generated."
+            ),
+            "count": len(
+                stored_hypotheses
+            ),
         },
     )
 
@@ -377,11 +462,13 @@ async def save_hypotheses(
 
     return run
 
+
 async def select_hypothesis(
     db: AsyncSession,
     run_id: UUID,
     hypothesis_id: UUID,
 ) -> Run:
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -394,16 +481,34 @@ async def select_hypothesis(
 
     if (
         run.status
-        != RunStatus.WAITING_FOR_CANDIDATE.value
+        != RunStatus
+        .WAITING_FOR_CANDIDATE
+        .value
     ):
         raise ValueError(
-            "Run is not waiting for candidate selection."
+            "Run is not waiting for "
+            "candidate selection."
+        )
+
+    state = dict(
+        run.state_json
+    )
+
+    if state.get(
+        "selected_hypothesis_id"
+    ):
+        raise ValueError(
+            "A candidate hypothesis "
+            "has already been selected."
         )
 
     result = await db.execute(
         select(Hypothesis).where(
-            Hypothesis.id == hypothesis_id,
-            Hypothesis.run_id == run_id,
+            Hypothesis.id
+            == hypothesis_id,
+
+            Hypothesis.run_id
+            == run_id,
         )
     )
 
@@ -413,52 +518,75 @@ async def select_hypothesis(
 
     if selected_hypothesis is None:
         raise ValueError(
-            "Hypothesis does not belong to this run."
+            "Hypothesis does not "
+            "belong to this run."
         )
 
-    hypotheses_result = await db.execute(
-        select(Hypothesis).where(
-            Hypothesis.run_id == run_id
+    hypotheses_result = (
+        await db.execute(
+            select(Hypothesis).where(
+                Hypothesis.run_id
+                == run_id
+            )
         )
     )
 
     hypotheses = list(
-        hypotheses_result.scalars().all()
+        hypotheses_result
+        .scalars()
+        .all()
     )
 
     for hypothesis in hypotheses:
+
         hypothesis.selected = (
-            hypothesis.id == hypothesis_id
+            hypothesis.id
+            == hypothesis_id
         )
 
         if hypothesis.selected:
-            hypothesis.status = "SELECTED"
+            hypothesis.status = (
+                "SELECTED"
+            )
         else:
-            hypothesis.status = "NOT_SELECTED"
-
-    state = dict(
-        run.state_json
-    )
+            hypothesis.status = (
+                "NOT_SELECTED"
+            )
 
     state[
         "selected_hypothesis_id"
-    ] = str(hypothesis_id)
+    ] = str(
+        hypothesis_id
+    )
 
     state_hypotheses = []
 
     for hypothesis in hypotheses:
+
         state_hypotheses.append(
             {
-                "id": str(hypothesis.id),
-                "summary": hypothesis.summary,
+                "id":
+                    str(
+                        hypothesis.id
+                    ),
+
+                "summary":
+                    hypothesis.summary,
+
                 "mechanism":
                     hypothesis.mechanism,
+
                 "expected_effect":
-                    hypothesis.expected_effect,
+                    hypothesis
+                    .expected_effect,
+
                 "trade_offs":
-                    hypothesis.trade_offs,
+                    hypothesis
+                    .trade_offs,
+
                 "selected":
                     hypothesis.selected,
+
                 "status":
                     hypothesis.status,
             }
@@ -476,13 +604,18 @@ async def select_hypothesis(
     )
 
     approvals["candidate"] = {
-        "status": "APPROVED",
-        "hypothesis_id": str(
-            hypothesis_id
-        ),
+        "status":
+            "APPROVED",
+
+        "hypothesis_id":
+            str(
+                hypothesis_id
+            ),
     }
 
-    state["approvals"] = approvals
+    state["approvals"] = (
+        approvals
+    )
 
     run.state_json = state
 
@@ -494,12 +627,18 @@ async def select_hypothesis(
 
     event = RunEvent(
         run_id=run_id,
-        event_type="CANDIDATE_SELECTED",
+        event_type=(
+            "CANDIDATE_SELECTED"
+        ),
         payload_json={
             "hypothesis_id":
-                str(hypothesis_id),
+                str(
+                    hypothesis_id
+                ),
+
             "message":
-                "Candidate hypothesis selected.",
+                "Candidate hypothesis "
+                "selected.",
         },
     )
 
@@ -519,8 +658,11 @@ async def get_selected_hypothesis(
 
     result = await db.execute(
         select(Hypothesis).where(
-            Hypothesis.run_id == run_id,
-            Hypothesis.selected.is_(True),
+            Hypothesis.run_id
+            == run_id,
+
+            Hypothesis.selected
+            .is_(True),
         )
     )
 
@@ -528,6 +670,324 @@ async def get_selected_hypothesis(
         result.scalar_one_or_none()
     )
 
+
+# =====================================================
+# CODER ATTEMPTS / RETRIES
+# =====================================================
+
+
+async def begin_coder_attempt(
+    db: AsyncSession,
+    run_id: UUID,
+) -> int:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        raise ValueError(
+            "Run not found."
+        )
+
+    state = dict(
+        run.state_json
+    )
+
+    iteration = (
+        int(
+            state.get(
+                "iteration_count",
+                0,
+            )
+        )
+        + 1
+    )
+
+    state["iteration_count"] = (
+        iteration
+    )
+
+    # Clear evidence belonging to
+    # the previous CURRENT attempt.
+    #
+    # attempt_history keeps old
+    # evidence permanently.
+    state["changes"] = {}
+    state["validation"] = {}
+    state["benchmark"] = {}
+    state["verification"] = {}
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "CODER_ATTEMPT_STARTED"
+        ),
+        payload_json={
+            "iteration":
+                iteration,
+
+            "message":
+                (
+                    f"Coder attempt "
+                    f"{iteration} started."
+                ),
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return iteration
+
+
+async def archive_failed_attempt(
+    db: AsyncSession,
+    run_id: UUID,
+    failure_stage: str,
+    reason: str,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    iteration = int(
+        state.get(
+            "iteration_count",
+            0,
+        )
+    )
+
+    history = list(
+        state.get(
+            "attempt_history",
+            [],
+        )
+    )
+
+    changes = dict(
+        state.get(
+            "changes",
+            {},
+        )
+    )
+
+    validation = dict(
+        state.get(
+            "validation",
+            {},
+        )
+    )
+
+    benchmark = dict(
+        state.get(
+            "benchmark",
+            {},
+        )
+    )
+
+    verification = dict(
+        state.get(
+            "verification",
+            {},
+        )
+    )
+
+    history.append(
+        {
+            "iteration":
+                iteration,
+
+            "outcome":
+                "REJECTED",
+
+            "failure_stage":
+                failure_stage,
+
+            "reason":
+                reason,
+
+            "changes":
+                changes,
+
+            "validation":
+                validation,
+
+            "benchmark":
+                benchmark,
+
+            "verification":
+                verification,
+        }
+    )
+
+    state["attempt_history"] = (
+        history
+    )
+
+    # This survives begin_coder_attempt()
+    # and is included in retry prompt.
+    state["retry_feedback"] = {
+        "previous_iteration":
+            iteration,
+
+        "failure_stage":
+            failure_stage,
+
+        "reason":
+            reason,
+
+        "previous_changes":
+            changes,
+
+        "validation":
+            validation,
+
+        "benchmark":
+            benchmark,
+
+        "verification":
+            verification,
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "CODER_ATTEMPT_REJECTED"
+        ),
+        payload_json={
+            "iteration":
+                iteration,
+
+            "failure_stage":
+                failure_stage,
+
+            "reason":
+                reason,
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+async def archive_successful_attempt(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    iteration = int(
+        state.get(
+            "iteration_count",
+            0,
+        )
+    )
+
+    history = list(
+        state.get(
+            "attempt_history",
+            [],
+        )
+    )
+
+    history.append(
+        {
+            "iteration":
+                iteration,
+
+            "outcome":
+                "VERIFIED",
+
+            "failure_stage":
+                None,
+
+            "reason":
+                None,
+
+            "changes":
+                dict(
+                    state.get(
+                        "changes",
+                        {},
+                    )
+                ),
+
+            "validation":
+                dict(
+                    state.get(
+                        "validation",
+                        {},
+                    )
+                ),
+
+            "benchmark":
+                dict(
+                    state.get(
+                        "benchmark",
+                        {},
+                    )
+                ),
+
+            "verification":
+                dict(
+                    state.get(
+                        "verification",
+                        {},
+                    )
+                ),
+        }
+    )
+
+    state["attempt_history"] = (
+        history
+    )
+
+    # No more retry information needed.
+    state["retry_feedback"] = None
+
+    run.state_json = state
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+# =====================================================
+# PATCH EVIDENCE
+# =====================================================
 
 
 async def save_candidate_change(
@@ -554,20 +1014,43 @@ async def save_candidate_change(
         run.state_json
     )
 
+    iteration = int(
+        state.get(
+            "iteration_count",
+            0,
+        )
+    )
+
+    if iteration <= 0:
+        raise ValueError(
+            "Coder attempt has not "
+            "been started."
+        )
+
     state["changes"] = {
-        "iteration": 1,
+        "iteration":
+            iteration,
+
         "selected_hypothesis_id":
-            str(selected_hypothesis_id),
+            str(
+                selected_hypothesis_id
+            ),
+
         "original_function":
             original_function,
+
         "candidate_function":
             candidate_function,
+
         "diff":
             diff,
+
         "change_summary":
             change_summary,
+
         "expected_mechanism":
             expected_mechanism,
+
         "policy":
             policy_result,
     }
@@ -593,12 +1076,21 @@ async def save_candidate_change(
 
     event = RunEvent(
         run_id=run_id,
-        event_type="PATCH_PROPOSED",
+        event_type=(
+            "PATCH_PROPOSED"
+        ),
         payload_json={
             "message":
-                "Coder produced a candidate patch.",
+                "Coder produced a "
+                "candidate patch.",
+
+            "iteration":
+                iteration,
+
             "policy_passed":
-                policy_result["passed"],
+                policy_result[
+                    "passed"
+                ],
         },
     )
 
@@ -608,6 +1100,11 @@ async def save_candidate_change(
     await db.refresh(run)
 
     return run
+
+
+# =====================================================
+# CORRECTNESS VALIDATION
+# =====================================================
 
 
 async def save_validation_result(
@@ -627,13 +1124,21 @@ async def save_validation_result(
         return None
 
     baseline_passed = (
-        not baseline_result["timed_out"]
-        and baseline_result["exit_code"] == 0
+        not baseline_result[
+            "timed_out"
+        ]
+        and baseline_result[
+            "exit_code"
+        ] == 0
     )
 
     candidate_passed = (
-        not candidate_result["timed_out"]
-        and candidate_result["exit_code"] == 0
+        not candidate_result[
+            "timed_out"
+        ]
+        and candidate_result[
+            "exit_code"
+        ] == 0
     )
 
     correctness_passed = (
@@ -651,10 +1156,14 @@ async def save_validation_result(
             else "FAIL"
         ),
         stdout_ref=(
-            baseline_result["stdout"][-8000:]
+            baseline_result[
+                "stdout"
+            ][-8000:]
         ),
         duration_ms=(
-            baseline_result["duration_ms"]
+            baseline_result[
+                "duration_ms"
+            ]
         ),
     )
 
@@ -668,10 +1177,14 @@ async def save_validation_result(
             else "FAIL"
         ),
         stdout_ref=(
-            candidate_result["stdout"][-8000:]
+            candidate_result[
+                "stdout"
+            ][-8000:]
         ),
         duration_ms=(
-            candidate_result["duration_ms"]
+            candidate_result[
+                "duration_ms"
+            ]
         ),
     )
 
@@ -683,15 +1196,23 @@ async def save_validation_result(
     )
 
     state["validation"] = {
-        "strategy": "existing_tests",
+        "iteration":
+            iteration,
+
+        "strategy":
+            "existing_tests",
 
         "baseline": {
-            "passed": baseline_passed,
+            "passed":
+                baseline_passed,
+
             **baseline_result,
         },
 
         "candidate": {
-            "passed": candidate_passed,
+            "passed":
+                candidate_passed,
+
             **candidate_result,
         },
 
@@ -703,12 +1224,19 @@ async def save_validation_result(
 
     event = RunEvent(
         run_id=run_id,
-        event_type="VALIDATION_COMPLETED",
+        event_type=(
+            "VALIDATION_COMPLETED"
+        ),
         payload_json={
+            "iteration":
+                iteration,
+
             "correctness_passed":
                 correctness_passed,
+
             "baseline_passed":
                 baseline_passed,
+
             "candidate_passed":
                 candidate_passed,
         },
@@ -738,8 +1266,12 @@ async def save_differential_validation_result(
         return None
 
     passed = (
-        not result["timed_out"]
-        and result["exit_code"] == 0
+        not result[
+            "timed_out"
+        ]
+        and result[
+            "exit_code"
+        ] == 0
     )
 
     validation_row = Validation(
@@ -752,10 +1284,14 @@ async def save_differential_validation_result(
             else "FAIL"
         ),
         stdout_ref=(
-            result["stdout"][-8000:]
+            result[
+                "stdout"
+            ][-8000:]
         ),
         duration_ms=(
-            result["duration_ms"]
+            result[
+                "duration_ms"
+            ]
         ),
     )
 
@@ -768,12 +1304,16 @@ async def save_differential_validation_result(
     )
 
     state["validation"] = {
+        "iteration":
+            iteration,
+
         "strategy":
             "hypothesis_differential",
 
         "differential": {
             "passed":
                 passed,
+
             **result,
         },
 
@@ -789,24 +1329,28 @@ async def save_differential_validation_result(
             "VALIDATION_COMPLETED"
         ),
         payload_json={
+            "iteration":
+                iteration,
+
             "strategy":
                 "hypothesis_differential",
+
             "correctness_passed":
                 passed,
         },
     )
 
-    db.add(
-        event
-    )
+    db.add(event)
 
     await db.commit()
-
-    await db.refresh(
-        run
-    )
+    await db.refresh(run)
 
     return run
+
+
+# =====================================================
+# BENCHMARKING
+# =====================================================
 
 
 async def save_benchmark_result(
@@ -914,6 +1458,9 @@ async def save_benchmark_result(
             "BENCHMARK_COMPLETED"
         ),
         payload_json={
+            "iteration":
+                iteration,
+
             "baseline_median_seconds":
                 baseline_median,
 
@@ -931,16 +1478,116 @@ async def save_benchmark_result(
         },
     )
 
-    db.add(
-        event
-    )
+    db.add(event)
 
     await db.commit()
-
-    await db.refresh(
-        run
-    )
+    await db.refresh(run)
 
     return run
 
+
+# =====================================================
+# VERIFICATION
+# =====================================================
+
+
+async def save_verification_result(
+    db: AsyncSession,
+    run_id: UUID,
+    result: dict,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    iteration = int(
+        state.get(
+            "iteration_count",
+            0,
+        )
+    )
+
+    state["verification"] = {
+        "iteration":
+            iteration,
+
+        "passed":
+            result[
+                "passed"
+            ],
+
+        "policy_passed":
+            result[
+                "policy_passed"
+            ],
+
+        "correctness_passed":
+            result[
+                "correctness_passed"
+            ],
+
+        "performance_passed":
+            result[
+                "performance_passed"
+            ],
+
+        "reasons":
+            result[
+                "reasons"
+            ],
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "VERIFICATION_COMPLETED"
+        ),
+        payload_json={
+            "iteration":
+                iteration,
+
+            "passed":
+                result[
+                    "passed"
+                ],
+
+            "policy_passed":
+                result[
+                    "policy_passed"
+                ],
+
+            "correctness_passed":
+                result[
+                    "correctness_passed"
+                ],
+
+            "performance_passed":
+                result[
+                    "performance_passed"
+                ],
+
+            "reasons":
+                result[
+                    "reasons"
+                ],
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
 #THIS IS CONTROLLER(FROM SPRINGBOOT) WHICH SEND DATA INTO SERVICE 
