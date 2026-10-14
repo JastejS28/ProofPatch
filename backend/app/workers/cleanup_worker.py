@@ -26,8 +26,22 @@ TERMINAL_STATUSES = {
 async def cleanup_run_workflow(
     run_id: UUID,
 ) -> None:
+    """
+    Delete the local workspace for a run
+    after it reaches a terminal state.
+
+    Cleanup is housekeeping only.
+
+    A cleanup failure must never change
+    the actual outcome of the run.
+    """
 
     try:
+
+        # ---------------------------------
+        # 1. Verify that the run exists and
+        #    is actually terminal.
+        # ---------------------------------
 
         async with (
             AsyncSessionLocal()
@@ -47,12 +61,24 @@ async def cleanup_run_workflow(
             ):
                 return
 
+        # ---------------------------------
+        # 2. Delete workspace outside the
+        #    DB session.
+        #
+        # shutil.rmtree is blocking, so run
+        # it in a thread.
+        # ---------------------------------
+
         cleaned = (
             await asyncio.to_thread(
                 cleanup_run_workspace,
                 run_id,
             )
         )
+
+        # ---------------------------------
+        # 3. Persist cleanup evidence.
+        # ---------------------------------
 
         async with (
             AsyncSessionLocal()
@@ -66,6 +92,9 @@ async def cleanup_run_workflow(
 
     except WorkspaceCleanupError as exc:
 
+        # Cleanup failure must NOT convert
+        # COMPLETED / FAILED / UNVERIFIED /
+        # CANCELLED into another run status.
         print(
             "[WORKSPACE CLEANUP] "
             f"{run_id}: {exc}"
@@ -73,4 +102,6 @@ async def cleanup_run_workflow(
 
     except Exception:
 
+        # Again, cleanup is secondary.
+        # Preserve the original run outcome.
         traceback.print_exc()

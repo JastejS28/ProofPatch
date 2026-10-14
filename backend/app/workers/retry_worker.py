@@ -27,12 +27,15 @@ async def handle_candidate_failure(
 ) -> None:
 
     should_retry = False
+    should_cleanup = False
 
-    async with AsyncSessionLocal() as db:
+    async with (
+        AsyncSessionLocal()
+    ) as db:
 
-        # -------------------------
-        # 1. Load current run
-        # -------------------------
+        # =================================
+        # 1. Load run
+        # =================================
 
         run = await get_run(
             db=db,
@@ -60,9 +63,9 @@ async def handle_candidate_failure(
             )
         )
 
-        # -------------------------
+        # =================================
         # 2. Archive rejected attempt
-        # -------------------------
+        # =================================
 
         await archive_failed_attempt(
             db=db,
@@ -73,9 +76,9 @@ async def handle_candidate_failure(
             reason=reason,
         )
 
-        # -------------------------
-        # 3. Maximum attempts reached
-        # -------------------------
+        # =================================
+        # 3. Maximum attempts exhausted
+        # =================================
 
         if (
             iteration
@@ -97,91 +100,118 @@ async def handle_candidate_failure(
                 ),
             )
 
-            return
+            should_cleanup = True
 
-        # -------------------------
-        # 4. Restore real baseline
-        # -------------------------
+        # =================================
+        # 4. Retry still available
+        # =================================
 
-        original_function = (
-            changes.get(
-                "original_function"
-            )
-        )
+        else:
 
-        if not original_function:
-
-            await transition_run(
-                db=db,
-                run_id=run_id,
-                status=(
-                    RunStatus.UNVERIFIED
-                ),
-                message=(
-                    "Retry could not continue "
-                    "because the original "
-                    "target function was "
-                    "unavailable."
-                ),
+            original_function = (
+                changes.get(
+                    "original_function"
+                )
             )
 
-            return
+            # -----------------------------
+            # Cannot restore baseline
+            # -----------------------------
 
-        workspace = Path(
-            state[
-                "workspace_ref"
-            ]
+            if not original_function:
+
+                await transition_run(
+                    db=db,
+                    run_id=run_id,
+                    status=(
+                        RunStatus.UNVERIFIED
+                    ),
+                    message=(
+                        "Retry could not continue "
+                        "because the original "
+                        "target function was "
+                        "unavailable."
+                    ),
+                )
+
+                should_cleanup = True
+
+            # -----------------------------
+            # Restore baseline and retry
+            # -----------------------------
+
+            else:
+
+                workspace = Path(
+                    state[
+                        "workspace_ref"
+                    ]
+                )
+
+                restore_original_function(
+                    workspace=workspace,
+                    target_file=(
+                        run.target_file
+                    ),
+                    target_function=(
+                        run.target_function
+                    ),
+                    original_function=(
+                        original_function
+                    ),
+                )
+
+                await transition_run(
+                    db=db,
+                    run_id=run_id,
+                    status=(
+                        RunStatus.MODIFYING
+                    ),
+                    message=(
+                        f"Coder attempt "
+                        f"{iteration} was rejected. "
+                        "Original function restored "
+                        "for retry."
+                    ),
+                )
+
+                should_retry = True
+
+    # =====================================
+    # DB session closed here
+    # =====================================
+
+    # =====================================
+    # 5. Terminal UNVERIFIED cleanup
+    # =====================================
+
+    if should_cleanup:
+
+        # Local import avoids unnecessary
+        # worker-level circular imports.
+        from app.workers.cleanup_worker import (
+            cleanup_run_workflow,
         )
 
-        restore_original_function(
-            workspace=workspace,
-
-            target_file=(
-                run.target_file
-            ),
-
-            target_function=(
-                run.target_function
-            ),
-
-            original_function=(
-                original_function
-            ),
+        await cleanup_run_workflow(
+            run_id
         )
 
-        # -------------------------
-        # 5. Record retry preparation
-        # -------------------------
+        return
 
-        await transition_run(
-            db=db,
-            run_id=run_id,
-            status=(
-                RunStatus.MODIFYING
-            ),
-            message=(
-                f"Coder attempt "
-                f"{iteration} was rejected. "
-                "Original function restored "
-                "for retry."
-            ),
-        )
-
-        should_retry = True
-
-    # -------------------------
-    # 6. Session is now closed
-    # -------------------------
+    # =====================================
+    # 6. Start next Coder attempt
+    # =====================================
 
     if should_retry:
 
-        # Local import avoids:
+        # Local import prevents:
         #
         # coder_worker
-        #   -> retry_worker
-        #   -> coder_worker
+        # → retry_worker
+        # → coder_worker
         #
-        # import cycle.
+        # circular import.
         from app.workers.coder_worker import (
             run_coder_workflow,
         )

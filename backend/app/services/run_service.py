@@ -259,6 +259,10 @@ async def fail_run(
     if run is None:
         return None
 
+    # ---------------------------------
+    # 1. Set terminal FAILED state
+    # ---------------------------------
+
     run.status = (
         RunStatus.FAILED.value
     )
@@ -280,7 +284,8 @@ async def fail_run(
 
     errors.append(
         {
-            "message": message,
+            "message":
+                message,
         }
     )
 
@@ -296,20 +301,53 @@ async def fail_run(
 
     run.state_json = state
 
+    # ---------------------------------
+    # 2. Record failure event
+    # ---------------------------------
+
     event = RunEvent(
         run_id=run_id,
         event_type=(
             RunStatus.FAILED.value
         ),
         payload_json={
-            "message": message,
+            "message":
+                message,
         },
     )
 
     db.add(event)
 
+    # ---------------------------------
+    # 3. Persist FAILED first
+    #
+    # Important:
+    # the terminal state must survive
+    # even if cleanup later fails.
+    # ---------------------------------
+
     await db.commit()
     await db.refresh(run)
+
+    # ---------------------------------
+    # 4. Cleanup local workspace
+    #
+    # Local import avoids:
+    #
+    # run_service
+    # → cleanup_worker
+    # → run_service
+    #
+    # module-level circular import.
+    # ---------------------------------
+
+    from app.workers.cleanup_worker import (
+        cleanup_run_workflow,
+    )
+
+    await cleanup_run_workflow(
+        run_id
+    )
 
     return run
 

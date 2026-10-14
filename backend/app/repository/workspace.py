@@ -22,6 +22,7 @@ def get_workspace_root() -> Path:
 
     if configured_root.is_absolute():
         root = configured_root
+
     else:
         root = (
             ROOT_DIR
@@ -82,6 +83,12 @@ def cleanup_run_workspace(
         ).resolve()
     )
 
+    # ---------------------------------
+    # Safety:
+    # workspace must remain underneath
+    # configured workspace root.
+    # ---------------------------------
+
     try:
 
         workspace.relative_to(
@@ -95,6 +102,7 @@ def cleanup_run_workspace(
             "the configured workspace root."
         ) from exc
 
+    # Already deleted is fine.
     if not workspace.exists():
         return False
 
