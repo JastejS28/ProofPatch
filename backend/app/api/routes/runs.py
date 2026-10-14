@@ -9,15 +9,6 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
-from app.services.run_service import (
-    approve_pr_creation,
-    create_run,
-    get_run,
-    list_run_events,
-    prepare_pr_retry,
-    reject_pr_creation,
-    select_hypothesis,
-)
 
 from app.db.session import (
     get_db,
@@ -41,11 +32,16 @@ from app.schemas.run import (
 )
 from app.services.run_service import (
     approve_pr_creation,
+    cancel_run,
     create_run,
     get_run,
     list_run_events,
+    prepare_pr_retry,
     reject_pr_creation,
     select_hypothesis,
+)
+from app.workers.cleanup_worker import (
+    cleanup_run_workflow,
 )
 from app.workers.coder_worker import (
     run_coder_workflow,
@@ -199,7 +195,7 @@ async def make_run_decision(
 ) -> RunDecisionResponse:
 
     # ==================================
-    # 1. Candidate hypothesis selection
+    # 1. Candidate selection
     # ==================================
 
     if (
@@ -257,7 +253,7 @@ async def make_run_decision(
         )
 
     # ==================================
-    # 2. Human approves PR creation
+    # 2. Approve PR
     # ==================================
 
     if (
@@ -267,9 +263,11 @@ async def make_run_decision(
 
         try:
 
-            run = await approve_pr_creation(
-                db=db,
-                run_id=run_id,
+            run = (
+                await approve_pr_creation(
+                    db=db,
+                    run_id=run_id,
+                )
             )
 
         except ValueError as exc:
@@ -284,8 +282,6 @@ async def make_run_decision(
                 ),
             ) from exc
 
-        # Actual GitHub work happens
-        # asynchronously after approval.
         start_background_task(
             run_pr_workflow(
                 run.id
@@ -299,7 +295,7 @@ async def make_run_decision(
         )
 
     # ==================================
-    # 3. Human rejects PR creation
+    # 3. Reject PR
     # ==================================
 
     if (
@@ -309,9 +305,11 @@ async def make_run_decision(
 
         try:
 
-            run = await reject_pr_creation(
-                db=db,
-                run_id=run_id,
+            run = (
+                await reject_pr_creation(
+                    db=db,
+                    run_id=run_id,
+                )
             )
 
         except ValueError as exc:
@@ -326,15 +324,17 @@ async def make_run_decision(
                 ),
             ) from exc
 
+        start_background_task(
+            cleanup_run_workflow(
+                run.id
+            )
+        )
+
         return RunDecisionResponse(
             run_id=run.id,
             status=run.status,
             selected_hypothesis_id=None,
         )
-
-    # ==================================
-    # 4. Unknown decision
-    # ==================================
 
     raise HTTPException(
         status_code=(
@@ -347,6 +347,11 @@ async def make_run_decision(
             f"is not implemented."
         ),
     )
+
+
+# =====================================================
+# RETRY PR
+# =====================================================
 
 
 @router.post(
@@ -383,6 +388,56 @@ async def retry_pr_creation_endpoint(
 
     start_background_task(
         run_pr_workflow(
+            run.id
+        )
+    )
+
+    return RunDecisionResponse(
+        run_id=run.id,
+        status=run.status,
+        selected_hypothesis_id=None,
+    )
+
+
+# =====================================================
+# CANCEL RUN
+# =====================================================
+
+
+@router.post(
+    "/{run_id}/cancel",
+    response_model=(
+        RunDecisionResponse
+    ),
+)
+async def cancel_run_endpoint(
+    run_id: UUID,
+    db: AsyncSession = Depends(
+        get_db
+    ),
+) -> RunDecisionResponse:
+
+    try:
+
+        run = await cancel_run(
+            db=db,
+            run_id=run_id,
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=(
+                status
+                .HTTP_409_CONFLICT
+            ),
+            detail=str(
+                exc
+            ),
+        ) from exc
+
+    start_background_task(
+        cleanup_run_workflow(
             run.id
         )
     )

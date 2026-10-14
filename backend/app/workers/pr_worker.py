@@ -7,14 +7,6 @@ from sqlalchemy import select
 from app.db.session import (
     AsyncSessionLocal,
 )
-from app.services.run_service import (
-    fail_run,
-    get_run,
-    mark_pr_attempt_started,
-    save_pr_failure,
-    save_pr_progress,
-    save_pr_result,
-)
 from app.models.approval import (
     Approval,
 )
@@ -28,8 +20,13 @@ from app.repository.github_pr import (
 from app.services.run_service import (
     fail_run,
     get_run,
+    mark_pr_attempt_started,
+    save_pr_failure,
     save_pr_progress,
     save_pr_result,
+)
+from app.workers.cleanup_worker import (
+    cleanup_run_workflow,
 )
 
 
@@ -148,13 +145,16 @@ correctness validation, benchmark threshold,
 deterministic verification, and human PR approval.
 """.strip()
 
+
 async def run_pr_workflow(
     run_id: UUID,
 ) -> None:
 
     try:
 
-        async with AsyncSessionLocal() as db:
+        async with (
+            AsyncSessionLocal()
+        ) as db:
 
             # -------------------------
             # 1. Load run
@@ -282,7 +282,6 @@ async def run_pr_workflow(
                 run_id=run_id,
             )
 
-            # Reload after state change.
             run = await get_run(
                 db=db,
                 run_id=run_id,
@@ -329,7 +328,7 @@ async def run_pr_workflow(
             )
 
         # ==================================
-        # DB session closed during GitHub I/O
+        # DB session closed for GitHub I/O
         # ==================================
 
         branch = (
@@ -394,9 +393,7 @@ async def run_pr_workflow(
         await commit_candidate_file(
             repo_url=repo_url,
             workspace=workspace,
-            target_file=(
-                target_file
-            ),
+            target_file=target_file,
             branch=branch,
             base_branch=base_branch,
         )
@@ -421,7 +418,7 @@ async def run_pr_workflow(
             )
 
         # -------------------------
-        # 9. Check for existing PR
+        # 9. Existing PR check
         # -------------------------
 
         existing = (
@@ -458,6 +455,10 @@ async def run_pr_workflow(
                     },
                 )
 
+            await cleanup_run_workflow(
+                run_id
+            )
+
             return
 
         # -------------------------
@@ -468,9 +469,7 @@ async def run_pr_workflow(
             await create_pr_only(
                 repo_url=repo_url,
                 branch=branch,
-                base_branch=(
-                    base_branch
-                ),
+                base_branch=base_branch,
                 title=title,
                 body=body,
             )
@@ -505,8 +504,12 @@ async def run_pr_workflow(
                 },
             )
 
+        await cleanup_run_workflow(
+            run_id
+        )
+
     # ======================================
-    # GitHub/external errors are RETRYABLE
+    # GitHub/external errors are retryable
     # ======================================
 
     except GitHubPRCreationError as exc:
@@ -524,7 +527,7 @@ async def run_pr_workflow(
             )
 
     # ======================================
-    # Internal ProofPatch bugs are FAILED
+    # Internal ProofPatch failures
     # ======================================
 
     except Exception as exc:
