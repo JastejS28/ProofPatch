@@ -1590,4 +1590,765 @@ async def save_verification_result(
     await db.refresh(run)
 
     return run
+
+
+
+async def save_review_result(
+    db: AsyncSession,
+    run_id: UUID,
+    review: dict,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    state["review"] = {
+        **review,
+    }
+
+    state["status"] = (
+        RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    )
+
+    state["current_step"] = (
+        RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    )
+
+    run.status = (
+        RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    )
+
+    run.current_step = (
+        RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    )
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            RunStatus
+            .WAITING_FOR_PR_APPROVAL
+            .value
+        ),
+        payload_json={
+            "message":
+                "Reviewer completed. "
+                "Waiting for human PR approval."
+        },
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+    await db.refresh(
+        run
+    )
+
+    return run
+
+async def approve_pr_creation(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        raise ValueError(
+            "Run not found."
+        )
+
+    if (
+        run.status
+        != RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    ):
+        raise ValueError(
+            "Run is not waiting for "
+            "PR approval."
+        )
+
+    state = dict(
+    run.state_json
+)
+
+    existing_pr = dict(
+    state.get(
+        "pr",
+        {},
+    )
+)
+
+    if existing_pr.get(
+    "url"
+):
+     raise ValueError(
+        "A pull request already exists "
+        "for this run."
+    )
+
+    approvals = dict(
+        state.get(
+            "approvals",
+            {},
+        )
+    )
+
+    approvals["pr"] = {
+        "status": "APPROVED",
+    }
+
+    state["approvals"] = approvals
+
+    state["status"] = (
+        RunStatus.CREATING_PR.value
+    )
+
+    state["current_step"] = (
+        RunStatus.CREATING_PR.value
+    )
+
+    run.status = (
+        RunStatus.CREATING_PR.value
+    )
+
+    run.current_step = (
+        RunStatus.CREATING_PR.value
+    )
+
+    # IMPORTANT:
+    # reassign the full JSON object so
+    # SQLAlchemy definitely persists it.
+    run.state_json = state
+
+    approval = Approval(
+        run_id=run_id,
+        approval_type="pr",
+        status="APPROVED",
+    )
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            RunStatus.CREATING_PR.value
+        ),
+        payload_json={
+            "message":
+                "Human approved PR creation."
+        },
+    )
+
+    db.add(approval)
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+async def reject_pr_creation(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        raise ValueError(
+            "Run not found."
+        )
+
+    if (
+        run.status
+        != RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value
+    ):
+        raise ValueError(
+            "Run is not waiting for "
+            "PR approval."
+        )
+
+    state = dict(
+        run.state_json
+    )
+
+    approvals = dict(
+        state.get(
+            "approvals",
+            {},
+        )
+    )
+
+    approvals["pr"] = {
+        "status":
+            "REJECTED",
+    }
+
+    state["approvals"] = (
+        approvals
+    )
+
+    state["status"] = (
+        RunStatus.CANCELLED.value
+    )
+
+    state["current_step"] = (
+        RunStatus.CANCELLED.value
+    )
+
+    run.status = (
+        RunStatus.CANCELLED.value
+    )
+
+    run.current_step = (
+        RunStatus.CANCELLED.value
+    )
+
+    approval = Approval(
+        run_id=run_id,
+        approval_type="pr",
+        status="REJECTED",
+    )
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            RunStatus.CANCELLED.value
+        ),
+        payload_json={
+            "message":
+                "Human rejected PR creation."
+        },
+    )
+
+    db.add(
+        approval
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+    await db.refresh(
+        run
+    )
+
+    return run
+
+
+async def save_pr_result(
+    db: AsyncSession,
+    run_id: UUID,
+    pr_data: dict,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    state["pr"] = {
+        **pr_data,
+    }
+
+    state["status"] = (
+        RunStatus.COMPLETED.value
+    )
+
+    state["current_step"] = (
+        RunStatus.COMPLETED.value
+    )
+
+    run.status = (
+        RunStatus.COMPLETED.value
+    )
+
+    run.current_step = (
+        RunStatus.COMPLETED.value
+    )
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            RunStatus.COMPLETED.value
+        ),
+        payload_json={
+            "message":
+                "GitHub pull request "
+                "created successfully.",
+
+            "pr_number":
+                pr_data[
+                    "number"
+                ],
+
+            "pr_url":
+                pr_data[
+                    "url"
+                ],
+        },
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+    await db.refresh(
+        run
+    )
+
+    return run
+
+async def save_pr_progress(
+    db: AsyncSession,
+    run_id: UUID,
+    pr_data: dict,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    current_pr = dict(
+        state.get(
+            "pr",
+            {},
+        )
+    )
+
+    current_pr.update(
+        pr_data
+    )
+
+    state["pr"] = (
+        current_pr
+    )
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type="PR_PROGRESS",
+        payload_json={
+            **pr_data,
+        },
+    )
+
+    db.add(
+        event
+    )
+
+    await db.commit()
+    await db.refresh(
+        run
+    )
+
+    return run
+
+async def mark_pr_attempt_started(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    pr_state = dict(
+        state.get(
+            "pr",
+            {},
+        )
+    )
+
+    attempt_count = int(
+        pr_state.get(
+            "attempt_count",
+            0,
+        )
+    ) + 1
+
+    pr_state["status"] = (
+        "IN_PROGRESS"
+    )
+
+    pr_state["attempt_count"] = (
+        attempt_count
+    )
+
+    state["pr"] = pr_state
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "PR_ATTEMPT_STARTED"
+        ),
+        payload_json={
+            "attempt":
+                attempt_count,
+
+            "message":
+                "GitHub PR creation "
+                "attempt started.",
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+async def save_pr_failure(
+    db: AsyncSession,
+    run_id: UUID,
+    message: str,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    pr_state = dict(
+        state.get(
+            "pr",
+            {},
+        )
+    )
+
+    pr_state["status"] = (
+        "FAILED_RETRYABLE"
+    )
+
+    pr_state["last_error"] = (
+        message
+    )
+
+    state["pr"] = pr_state
+
+    # IMPORTANT:
+    # We intentionally keep the run in
+    # CREATING_PR instead of FAILED.
+    state["status"] = (
+        RunStatus.CREATING_PR.value
+    )
+
+    state["current_step"] = (
+        RunStatus.CREATING_PR.value
+    )
+
+    run.status = (
+        RunStatus.CREATING_PR.value
+    )
+
+    run.current_step = (
+        RunStatus.CREATING_PR.value
+    )
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "PR_FAILED_RETRYABLE"
+        ),
+        payload_json={
+            "message":
+                message,
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+async def prepare_pr_retry(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        raise ValueError(
+            "Run not found."
+        )
+
+    if (
+        run.status
+        != RunStatus
+        .CREATING_PR
+        .value
+    ):
+        raise ValueError(
+            "Run is not in the "
+            "PR creation stage."
+        )
+
+    state = dict(
+        run.state_json
+    )
+
+    pr_state = dict(
+        state.get(
+            "pr",
+            {},
+        )
+    )
+
+    if (
+        pr_state.get(
+            "status"
+        )
+        != "FAILED_RETRYABLE"
+    ):
+        raise ValueError(
+            "PR creation is not "
+            "waiting for a retry."
+        )
+
+    pr_state["status"] = (
+        "RETRYING"
+    )
+
+    state["pr"] = pr_state
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "PR_RETRY_REQUESTED"
+        ),
+        payload_json={
+            "message":
+                "Retry requested for "
+                "GitHub PR creation.",
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+async def save_workspace_cleanup(
+    db: AsyncSession,
+    run_id: UUID,
+    cleaned: bool,
+) -> Run | None:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+        return None
+
+    state = dict(
+        run.state_json
+    )
+
+    state["workspace"] = {
+        "cleaned": cleaned,
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            "WORKSPACE_CLEANED"
+        ),
+        payload_json={
+            "cleaned":
+                cleaned,
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
+
+
+async def cancel_run(
+    db: AsyncSession,
+    run_id: UUID,
+) -> Run:
+
+    run = await get_run(
+        db=db,
+        run_id=run_id,
+    )
+
+    if run is None:
+
+        raise ValueError(
+            "Run not found."
+        )
+
+    cancellable_statuses = {
+        RunStatus
+        .WAITING_FOR_CANDIDATE
+        .value,
+
+        RunStatus
+        .WAITING_FOR_PR_APPROVAL
+        .value,
+    }
+
+    state = dict(
+        run.state_json
+    )
+
+    pr_state = dict(
+        state.get(
+            "pr",
+            {},
+        )
+    )
+
+    retryable_pr_failure = (
+        run.status
+        == RunStatus
+        .CREATING_PR
+        .value
+        and pr_state.get(
+            "status"
+        )
+        == "FAILED_RETRYABLE"
+    )
+
+    if (
+        run.status
+        not in cancellable_statuses
+        and not retryable_pr_failure
+    ):
+
+        raise ValueError(
+            "Run cannot be cancelled "
+            "at its current stage."
+        )
+
+    run.status = (
+        RunStatus.CANCELLED.value
+    )
+
+    run.current_step = (
+        RunStatus.CANCELLED.value
+    )
+
+    state["status"] = (
+        RunStatus.CANCELLED.value
+    )
+
+    state["current_step"] = (
+        RunStatus.CANCELLED.value
+    )
+
+    state["cancellation"] = {
+        "requested": True,
+        "completed": True,
+    }
+
+    run.state_json = state
+
+    event = RunEvent(
+        run_id=run_id,
+        event_type=(
+            RunStatus.CANCELLED.value
+        ),
+        payload_json={
+            "message":
+                "Run cancelled by user."
+        },
+    )
+
+    db.add(event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    return run
+
 #THIS IS CONTROLLER(FROM SPRINGBOOT) WHICH SEND DATA INTO SERVICE 

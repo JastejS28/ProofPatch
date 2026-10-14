@@ -1,7 +1,12 @@
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    Field,
+)
 
 
-class OptimizationHypothesis(BaseModel):
+class OptimizationHypothesis(
+    BaseModel
+):
     summary: str = Field(
         min_length=5,
         max_length=300,
@@ -23,8 +28,12 @@ class OptimizationHypothesis(BaseModel):
     )
 
 
-class ScientistOutput(BaseModel):
-    hypotheses: list[OptimizationHypothesis] = Field(
-        min_length=1,
+class ScientistOutput(
+    BaseModel
+):
+    hypotheses: list[
+        OptimizationHypothesis
+    ] = Field(
+        min_length=2,
         max_length=3,
     )

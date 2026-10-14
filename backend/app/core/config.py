@@ -98,6 +98,16 @@ class Settings(BaseSettings):
 
     max_coder_attempts: int = 2
 
+    # -------------------------
+# GitHub write access
+# -------------------------
+
+    github_token: str | None = None
+
+    github_api_base: str = (
+    "https://api.github.com"
+)
+
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
         env_file_encoding="utf-8",

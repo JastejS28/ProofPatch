@@ -26,9 +26,8 @@ async def run_verification_workflow(
     run_id: UUID,
 ) -> None:
 
-    retry_reason: (
-        str | None
-    ) = None
+    retry_reason: str | None = None
+    review_ready = False
 
     try:
 
@@ -62,7 +61,10 @@ async def run_verification_workflow(
                 ),
             )
 
-            # Reload state after transition.
+            # -------------------------
+            # 3. Reload state
+            # -------------------------
+
             run = await get_run(
                 db=db,
                 run_id=run_id,
@@ -76,7 +78,7 @@ async def run_verification_workflow(
             )
 
             # -------------------------
-            # 3. Deterministic verifier
+            # 4. Deterministic verifier
             # -------------------------
 
             verification = (
@@ -87,8 +89,7 @@ async def run_verification_workflow(
 
             verification_data = {
                 "passed":
-                    verification
-                    .passed,
+                    verification.passed,
 
                 "policy_passed":
                     verification
@@ -103,12 +104,11 @@ async def run_verification_workflow(
                     .performance_passed,
 
                 "reasons":
-                    verification
-                    .reasons,
+                    verification.reasons,
             }
 
             # -------------------------
-            # 4. Persist decision
+            # 5. Save evidence
             # -------------------------
 
             await save_verification_result(
@@ -120,7 +120,7 @@ async def run_verification_workflow(
             )
 
             # -------------------------
-            # 5. Success
+            # 6. Verification passed
             # -------------------------
 
             if verification.passed:
@@ -143,26 +143,51 @@ async def run_verification_workflow(
                     ),
                 )
 
-                return
+                review_ready = True
 
             # -------------------------
-            # 6. Candidate failed
+            # 7. Verification failed
             # -------------------------
 
-            retry_reason = (
-                "; ".join(
-                    verification
-                    .reasons
+            else:
+
+                retry_reason = (
+                    "; ".join(
+                        verification.reasons
+                    )
+                    or
+                    (
+                        "Candidate failed "
+                        "deterministic "
+                        "verification."
+                    )
                 )
-                or
-                (
-                    "Candidate failed "
-                    "deterministic "
-                    "verification."
-                )
+
+        # ==================================
+        # DB session closed here
+        # ==================================
+
+        # -------------------------
+        # 8. Success → Reviewer
+        # -------------------------
+
+        if review_ready:
+
+            # Local import avoids unnecessary
+            # worker-level circular imports.
+            from app.workers.reviewer_worker import (
+                run_reviewer_workflow,
             )
 
-        # DB session closed here.
+            await run_reviewer_workflow(
+                run_id
+            )
+
+            return
+
+        # -------------------------
+        # 9. Failure → retry handler
+        # -------------------------
 
         if retry_reason is not None:
 
