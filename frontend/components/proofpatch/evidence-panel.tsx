@@ -16,7 +16,9 @@ export function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="panel evidence">
+    <section
+      className={`panel evidence ${label === "NON-LLM" ? "verification-panel" : label === "AI SUMMARY" ? "review-panel" : label?.startsWith("HUMAN GATE") ? "human-gate" : ""}`}
+    >
       <div className="panel-heading">
         <h2>{title}</h2>
         {label && <span className="mono muted">{label}</span>}
@@ -30,7 +32,7 @@ export function Result({ passed }: { passed?: boolean }) {
     <span
       className={`result ${passed == null ? "neutral" : passed ? "pass" : "fail"}`}
     >
-      {passed == null ? "Pending" : passed ? "Passed" : "Not passed"}
+      {passed == null ? "○ Pending" : passed ? "✓ Passed" : "× Not passed"}
     </span>
   );
 }
@@ -40,6 +42,30 @@ function Row({ name, children }: { name: string; children: React.ReactNode }) {
       <span className="muted">{name}</span>
       <span>{children}</span>
     </div>
+  );
+}
+export function EvidenceSummary({ state }: { state: RunState }) {
+  const rows: [string, boolean | undefined][] = [
+    [
+      "Policy",
+      state.verification?.policy_passed ?? state.changes?.policy?.passed,
+    ],
+    ["Correctness", state.validation?.correctness_passed],
+    ["Performance", state.benchmark?.passed],
+    ["Verification", state.verification?.passed],
+  ];
+  return (
+    <section
+      className="evidence-summary"
+      aria-label="Candidate evidence summary"
+    >
+      {rows.map(([label, passed]) => (
+        <div key={label}>
+          <span className="muted">{label}</span>
+          <Result passed={passed} />
+        </div>
+      ))}
+    </section>
   );
 }
 export function Details({
@@ -254,11 +280,23 @@ export function AttemptHistory({
         <article className="attempt" key={index}>
           <div className="attempt-heading">
             <b>Attempt {attempt.iteration ?? index + 1}</b>
-            <span className="result fail">Rejected</span>
+            <span
+              className={`result ${attempt.outcome === "VERIFIED" ? "pass" : attempt.outcome === "REJECTED" ? "fail" : "neutral"}`}
+            >
+              {attempt.outcome === "VERIFIED"
+                ? "✓ Verified"
+                : attempt.outcome === "REJECTED"
+                  ? "× Rejected"
+                  : "Archived"}
+            </span>
           </div>
           <p>
             {attempt.reason ||
-              "Candidate did not satisfy verification requirements."}
+              (attempt.outcome === "VERIFIED"
+                ? "Policy, correctness, and performance requirements satisfied."
+                : attempt.outcome === "REJECTED"
+                  ? "Candidate did not satisfy verification requirements."
+                  : "Archived candidate evidence.")}
           </p>
           {attempt.failure_stage && (
             <span className="mono muted">{attempt.failure_stage}</span>

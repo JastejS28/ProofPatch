@@ -1,4 +1,4 @@
-import type { Run, RunStatus } from "./types";
+import type { Run, RunStatus, RunEvent } from "./types";
 export const terminal = new Set<RunStatus>([
   "COMPLETED",
   "UNVERIFIED",
@@ -75,4 +75,68 @@ export function canCancel(run: Run) {
     (run.status === "CREATING_PR" &&
       run.state_json?.pr?.status === "FAILED_RETRYABLE")
   );
+}
+export type WorkflowStageState =
+  "completed" | "current" | "waiting" | "failed" | "stopped" | "pending";
+export function workflowStages(
+  run: Run,
+  events: RunEvent[],
+): WorkflowStageState[] {
+  const eventPhase: Record<string, number> = {
+    CANDIDATE_SELECTED: 1,
+    CODER_ATTEMPT_STARTED: 2,
+    PATCH_PROPOSED: 2,
+    VALIDATION_COMPLETED: 3,
+    BENCHMARK_COMPLETED: 4,
+    VERIFICATION_COMPLETED: 5,
+    REVIEW_COMPLETED: 6,
+    PR_APPROVED: 7,
+    PR_CREATION_STARTED: 8,
+    PR_BRANCH_CREATED: 8,
+    PR_COMMITTED: 8,
+    PR_CREATED: 8,
+  };
+  const ordered = [...events].sort(
+    (a, b) =>
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime() ||
+      b.id - a.id,
+  );
+  const failure = ordered.find(
+    (e) => e.event_type === "CODER_ATTEMPT_REJECTED",
+  );
+  const stageAlias: Record<string, number> = {
+    policy: 2,
+    correctness: 3,
+    validation: 3,
+    benchmark: 4,
+    performance: 4,
+    verification: 5,
+  };
+  const rejectedStage =
+    typeof failure?.payload_json?.failure_stage === "string"
+      ? stageAlias[failure.payload_json.failure_stage.toLowerCase()]
+      : undefined;
+  const latestPhase = ordered
+    .map((e) => phaseIndex(e.event_type) ?? eventPhase[e.event_type])
+    .find((p) => p != null);
+  const current =
+    phaseIndex(run.status) ??
+    (run.status === "UNVERIFIED" ? rejectedStage : undefined) ??
+    phaseIndex(run.current_step) ??
+    latestPhase ??
+    0;
+  return phases.map((_, index) => {
+    if (run.status === "COMPLETED" || index < current) return "completed";
+    if (index > current) return "pending";
+    if (
+      run.status === "FAILED" ||
+      run.status === "UNVERIFIED" ||
+      (run.status === "CREATING_PR" &&
+        run.state_json?.pr?.status === "FAILED_RETRYABLE")
+    )
+      return "failed";
+    if (run.status === "CANCELLED" || run.status === "CANCELLING")
+      return "stopped";
+    return humanWait.has(run.status) ? "waiting" : "current";
+  });
 }

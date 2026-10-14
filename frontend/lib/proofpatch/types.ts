@@ -87,21 +87,39 @@ export interface PREvidence {
   last_error?: unknown;
 }
 export interface ChangesEvidence {
+  change_summary?: string;
   policy?: { passed?: boolean; reasons?: string[] };
   diff?: string;
   unified_diff?: string;
 }
 export interface AttemptHistoryEntry {
   iteration?: number;
-  status?: string;
-  failure_stage?: string;
-  reason?: string;
+  outcome?: "REJECTED" | "VERIFIED";
+  failure_stage?: string | null;
+  reason?: string | null;
   changes?: ChangesEvidence;
   validation?: ValidationEvidence;
   benchmark?: BenchmarkEvidence;
   verification?: VerificationEvidence;
 }
 export interface RunState {
+  workspace?: { cleaned?: boolean };
+  approvals?: {
+    candidate?: { status?: string; hypothesis_id?: string };
+    pr?: { status?: string };
+  };
+  purity_check?: { passed?: boolean; reasons?: string[] };
+  repository_summary?: {
+    owner?: string;
+    repository?: string;
+    target_function?: string;
+    signature?: string;
+    source?: string;
+    line_start?: number;
+    line_end?: number;
+    imports?: string[];
+    related_test_files?: string[];
+  };
   hypotheses?: Hypothesis[];
   selected_hypothesis_id?: string | null;
   iteration_count?: number;

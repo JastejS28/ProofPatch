@@ -251,6 +251,10 @@ async def fail_run(
     message: str,
 ) -> Run | None:
 
+    # =====================================
+    # 1. Load run
+    # =====================================
+
     run = await get_run(
         db=db,
         run_id=run_id,
@@ -259,9 +263,9 @@ async def fail_run(
     if run is None:
         return None
 
-    # ---------------------------------
-    # 1. Set terminal FAILED state
-    # ---------------------------------
+    # =====================================
+    # 2. Move run to FAILED
+    # =====================================
 
     run.status = (
         RunStatus.FAILED.value
@@ -270,6 +274,10 @@ async def fail_run(
     run.current_step = (
         RunStatus.FAILED.value
     )
+
+    # =====================================
+    # 3. Update persistent state
+    # =====================================
 
     state = dict(
         run.state_json
@@ -301,9 +309,9 @@ async def fail_run(
 
     run.state_json = state
 
-    # ---------------------------------
-    # 2. Record failure event
-    # ---------------------------------
+    # =====================================
+    # 4. Store FAILED event
+    # =====================================
 
     event = RunEvent(
         run_id=run_id,
@@ -316,30 +324,34 @@ async def fail_run(
         },
     )
 
-    db.add(event)
+    db.add(
+        event
+    )
 
-    # ---------------------------------
-    # 3. Persist FAILED first
+    # =====================================
+    # 5. Persist FAILED first
     #
-    # Important:
-    # the terminal state must survive
-    # even if cleanup later fails.
-    # ---------------------------------
+    # Cleanup is secondary. Even if cleanup
+    # fails, the real run result must remain
+    # FAILED in PostgreSQL.
+    # =====================================
 
     await db.commit()
-    await db.refresh(run)
+    await db.refresh(
+        run
+    )
 
-    # ---------------------------------
-    # 4. Cleanup local workspace
+    # =====================================
+    # 6. Cleanup run workspace
     #
-    # Local import avoids:
+    # Local import prevents:
     #
     # run_service
-    # → cleanup_worker
-    # → run_service
+    #   → cleanup_worker
+    #   → run_service
     #
-    # module-level circular import.
-    # ---------------------------------
+    # circular import at module load time.
+    # =====================================
 
     from app.workers.cleanup_worker import (
         cleanup_run_workflow,
@@ -348,6 +360,10 @@ async def fail_run(
     await cleanup_run_workflow(
         run_id
     )
+
+    # =====================================
+    # 7. Return terminal run
+    # =====================================
 
     return run
 

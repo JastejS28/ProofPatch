@@ -1,10 +1,6 @@
+"use client";
+import { useState } from "react";
 import type { Run, RunEvent } from "@/lib/proofpatch/types";
-import {
-  phases,
-  phaseIndex,
-  humanWait,
-  terminal,
-} from "@/lib/proofpatch/status";
 import { date, text } from "@/lib/proofpatch/formatting";
 import { Panel, Details } from "./evidence-panel";
 export function WorkflowTimeline({
@@ -14,49 +10,28 @@ export function WorkflowTimeline({
   run: Run;
   events: RunEvent[];
 }) {
-  const latestPhase = [...events]
-    .reverse()
-    .map((event) => phaseIndex(event.event_type))
-    .find((value) => value != null);
-  const current = phaseIndex(run.status) ?? latestPhase ?? 0;
+  const [copyState, setCopyState] = useState("");
   return (
     <>
-      <Panel title="Workflow">
-        <ol className="workflow">
-          {phases.map((phase, index) => {
-            const blocked =
-              terminal.has(run.status) || run.status === "CANCELLING";
-            const state =
-              index < current
-                ? "completed"
-                : index === current
-                  ? blocked
-                    ? run.status === "FAILED" || run.status === "UNVERIFIED"
-                      ? "failed"
-                      : "stopped"
-                    : humanWait.has(run.status)
-                      ? "waiting"
-                      : "current"
-                  : "pending";
-            return (
-              <li key={phase} className={state}>
-                <span className="step-symbol">
-                  {state === "completed"
-                    ? "✓"
-                    : String(index + 1).padStart(2, "0")}
-                </span>
-                <span>
-                  {phase}
-                  <small>{state}</small>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      </Panel>
-      <Panel title="Run metadata">
+      <Panel title="Run metadata" label="CONTEXT">
         <dl className="metadata">
-          <dt>Run ID</dt>
+          <dt>
+            Run ID{" "}
+            <button
+              className="copy-button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(run.id);
+                  setCopyState("Copied");
+                } catch {
+                  setCopyState("Copy unavailable");
+                }
+              }}
+              aria-label="Copy run ID"
+            >
+              {copyState || "Copy"}
+            </button>
+          </dt>
           <dd className="mono">{run.id}</dd>
           <dt>Created</dt>
           <dd>{date(run.created_at)}</dd>
@@ -68,14 +43,30 @@ export function WorkflowTimeline({
             <>
               <dt>Resource usage</dt>
               <dd className="mono">
-                {run.state_json.budget.llm_calls ?? 0} LLM calls ·{" "}
-                {(run.state_json.budget.elapsed_sec ?? 0).toFixed(1)} s
+                {run.state_json.budget.llm_calls ?? "—"} LLM calls ·{" "}
+                {run.state_json.budget.elapsed_sec != null
+                  ? run.state_json.budget.elapsed_sec.toFixed(1)
+                  : "—"}{" "}
+                s
+              </dd>
+            </>
+          )}
+          {run.state_json?.workspace?.cleaned != null && (
+            <>
+              <dt>Workspace cleanup</dt>
+              <dd>
+                {run.state_json.workspace.cleaned
+                  ? "✓ Cleaned"
+                  : "Not yet cleaned"}
               </dd>
             </>
           )}
         </dl>
+        <span className="sr-only" role="status">
+          {copyState}
+        </span>
       </Panel>
-      <Panel title="Event log" label={String(events.length)}>
+      <Panel title="Event activity" label={String(events.length)}>
         <div className="event-log">
           {[...events]
             .sort(
@@ -85,10 +76,16 @@ export function WorkflowTimeline({
             )
             .map((event) => (
               <article className="event" key={event.id}>
-                <time className="mono muted" dateTime={event.timestamp}>
-                  {date(event.timestamp, true)}
-                </time>
-                <b className="mono">{event.event_type}</b>
+                <div className="event-heading">
+                  <time className="mono muted" dateTime={event.timestamp}>
+                    {date(event.timestamp, true)}
+                  </time>
+                  <span
+                    className={`event-indicator ${event.event_type.includes("FAILED") || event.event_type.includes("REJECTED") ? "error" : event.event_type.startsWith("WAITING") ? "wait" : ""}`}
+                    aria-hidden="true"
+                  />
+                  <b className="mono">{event.event_type}</b>
+                </div>
                 {event.payload_json?.message != null && (
                   <p>{text(event.payload_json.message)}</p>
                 )}

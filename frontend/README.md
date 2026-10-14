@@ -16,6 +16,7 @@ For production: `npm run build`, then `npm start`.
 ```sh
 npm run lint
 npm run typecheck
+npm test
 npm run build
 ```
 
@@ -27,6 +28,10 @@ There is no run-list endpoint, authentication, fabricated evidence, or client-si
 
 ## Integration verification
 
-Lint, TypeScript, and production build passed. Desktop and mobile pages were inspected in the browser with no horizontal overflow at the mobile breakpoint. Live FastAPI checks covered run creation, run/event polling, hypothesis selection, duplicate-selection rejection, cancellation, and propagation of 404/409/422 responses.
+The dark interface includes a technical pipeline illustration, a horizontal workflow derived from actual run states/events, and dedicated terminal reports for completed, unverified, failed, and cancelled runs. Success reports use recorded checks and human approval; absent evidence is marked as not recorded. Final connector, check, and report transitions run only when a polled run changes to completed, and all motion is disabled for reduced-motion preferences. Previously produced evidence remains visible below every terminal outcome.
 
-The optimization smoke run reached Docker validation, then the backend returned `FAILED` with `Baseline relevant tests did not pass.` Benchmarking, reviewer approval/rejection, and PR publication/retry therefore remain unverified end to end against this repository. Their frontend controls are connected to the existing backend operations; no fabricated results are used. No PR was published during verification.
+Lint, TypeScript, production build, and 18 regression tests passed. The tests cover archived attempt outcomes, real workflow-stage derivation, terminal reports, missing or contradictory success evidence, measured benchmark ratios, and safe PR links. Browser checks covered the homepage and real failed/cancelled runs at 1440, 1024, 768, and 390px with no horizontal page overflow. The workflow has its own controlled horizontal scroll on narrower screens; the compiled reduced-motion rules were checked.
+
+Live FastAPI checks covered run creation, run/event polling, hypothesis selection, duplicate-selection rejection, cancellation, and propagation of 404/409/422 responses.
+
+The latest optimization smoke run (`c4901d1c-25a5-4f05-91ba-8a56a9e25560`) reached Docker validation, then the backend returned `FAILED` with `Baseline relevant tests did not pass.` The repository's demo tests import `algorithms` as a top-level module while that file lives in `proofpatch-demo-target`, causing test collection to fail in the sandbox. Backend code was not changed. Benchmarking, reviewer approval/rejection, and PR publication/retry therefore remain unverified end to end against this repository. Completed and unverified report rendering is covered by regression tests, not fabricated live runs. No PR was published during verification.

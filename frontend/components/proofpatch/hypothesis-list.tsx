@@ -50,7 +50,11 @@ export function HypothesisList({
   return (
     <Panel
       title={
-        waiting ? "Choose an optimization hypothesis" : "Selected approach"
+        waiting
+          ? "Choose an optimization hypothesis"
+          : selected
+            ? "Selected approach"
+            : "Optimization hypotheses"
       }
       label="HUMAN GATE 01"
     >

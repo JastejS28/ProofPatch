@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Run, RunEvent } from "@/lib/proofpatch/types";
+import type { Run, RunEvent, RunStatus } from "@/lib/proofpatch/types";
 import {
   getRun,
   getRunEvents,
@@ -20,6 +20,7 @@ import {
 } from "@/lib/proofpatch/status";
 import { githubURL, text } from "@/lib/proofpatch/formatting";
 import {
+  EvidenceSummary,
   AttemptHistory,
   BenchmarkPanel,
   Details,
@@ -30,6 +31,12 @@ import {
 } from "./evidence-panel";
 import { HypothesisList } from "./hypothesis-list";
 import { WorkflowTimeline } from "./workflow-timeline";
+import { WorkflowProgress } from "./workflow-progress";
+import { GitHubPublication } from "./github-publication";
+import { TerminalOutcome, TerminalStatusStrip } from "./terminal-outcome";
+function decisionKey(run: Run) {
+  return `${run.status}:${run.state_json?.selected_hypothesis_id ?? ""}:${run.state_json?.pr?.status ?? ""}:${run.state_json?.pr?.attempt_count ?? 0}`;
+}
 export function RunView({ runId }: { runId: string }) {
   const [run, setRun] = useState<Run | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
@@ -37,6 +44,8 @@ export function RunView({ runId }: { runId: string }) {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState<string | null>(null);
+  const [completionTransition, setCompletionTransition] = useState(false);
+  const previousStatus = useRef<RunStatus | null>(null);
   const actionLock = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,12 +68,16 @@ export function RunView({ runId }: { runId: string }) {
       const failures: string[] = [];
       if (runResult.status === "fulfilled") {
         const next = runResult.value;
+        if (
+          next.status === "COMPLETED" &&
+          previousStatus.current != null &&
+          previousStatus.current !== "COMPLETED"
+        )
+          setCompletionTransition(true);
+        previousStatus.current = next.status;
         setRun(next);
         setAccepted((previous) =>
-          previous &&
-          previous !== `${next.status}:${next.state_json?.pr?.status ?? ""}`
-            ? null
-            : previous,
+          previous && previous !== decisionKey(next) ? null : previous,
         );
         nextDelay = terminal.has(next.status)
           ? null
@@ -96,6 +109,7 @@ export function RunView({ runId }: { runId: string }) {
   }, [runId]);
   useEffect(() => {
     active.current = true;
+    previousStatus.current = null;
     refreshRef.current = refresh;
     void refresh();
     return () => {
@@ -111,8 +125,7 @@ export function RunView({ runId }: { runId: string }) {
     setActionError("");
     try {
       await operation();
-      if (active.current)
-        setAccepted(`${run.status}:${run.state_json?.pr?.status ?? ""}`);
+      if (active.current) setAccepted(decisionKey(run));
     } catch (error) {
       if (active.current)
         setActionError(
@@ -133,7 +146,6 @@ export function RunView({ runId }: { runId: string }) {
   const pr = state.pr;
   const retryable =
     run?.status === "CREATING_PR" && pr?.status === "FAILED_RETRYABLE";
-  const prURL = githubURL(pr?.url);
   const openConfirm = (kind: "reject" | "cancel") => {
     setConfirm(kind);
     modal.current?.showModal();
@@ -145,7 +157,13 @@ export function RunView({ runId }: { runId: string }) {
       </Link>
       {!run ? (
         <section className="panel loading">
-          <h1>Loading run</h1>
+          <div className="eyebrow">CONNECTING TO RUN</div>
+          <h1>Retrieving the evidence trail</h1>
+          <div className="loading-skeleton" aria-hidden="true">
+            <div />
+            <div />
+            <div />
+          </div>
           <p className="mono muted">{runId}</p>
           {connectionError ? (
             <p className="error-message" role="alert">
@@ -189,43 +207,52 @@ export function RunView({ runId }: { runId: string }) {
               {run.status.replaceAll("_", " ")}
             </span>
           </div>
-          <section
-            className={`status-strip ${tone(run.status)}`}
-            aria-live="polite"
-          >
-            <span
-              className={
-                !terminal.has(run.status) &&
-                !humanWait.has(run.status) &&
-                !retryable
-                  ? "activity-dot"
-                  : "status-dot"
-              }
-            />
-            <div>
-              <b>
-                {retryable
-                  ? "GitHub publication needs attention"
-                  : humanWait.has(run.status)
-                    ? "Your decision is needed"
-                    : run.status.replaceAll("_", " ")}
-              </b>
-              <p>
-                {retryable
-                  ? "GitHub operation failed. The verified patch is preserved and can be retried."
-                  : statusCopy[run.status]}
-              </p>
-            </div>
-            {canCancel(run) && (
-              <button
-                className="secondary"
-                disabled={disabled}
-                onClick={() => openConfirm("cancel")}
-              >
-                Cancel run
-              </button>
-            )}
-          </section>
+          <WorkflowProgress
+            run={run}
+            events={events}
+            completionTransition={completionTransition}
+          />
+          {terminal.has(run.status) ? (
+            <TerminalStatusStrip run={run} />
+          ) : (
+            <section
+              className={`status-strip ${tone(run.status)}`}
+              aria-live="polite"
+            >
+              <span
+                className={
+                  !terminal.has(run.status) &&
+                  !humanWait.has(run.status) &&
+                  !retryable
+                    ? "activity-dot"
+                    : "status-dot"
+                }
+              />
+              <div>
+                <b>
+                  {retryable
+                    ? "GitHub publication needs attention"
+                    : humanWait.has(run.status)
+                      ? "Action required"
+                      : run.status.replaceAll("_", " ")}
+                </b>
+                <p>
+                  {retryable
+                    ? "GitHub operation failed. The verified patch is preserved and can be retried."
+                    : statusCopy[run.status]}
+                </p>
+              </div>
+              {canCancel(run) && (
+                <button
+                  className="secondary"
+                  disabled={disabled}
+                  onClick={() => openConfirm("cancel")}
+                >
+                  Cancel run
+                </button>
+              )}
+            </section>
+          )}
           {connectionError && (
             <div className="error-message" role="alert">
               {connectionError}{" "}
@@ -246,20 +273,12 @@ export function RunView({ runId }: { runId: string }) {
           )}
           <div className="run-grid">
             <div className="main-column">
-              {run.status === "FAILED" && (
-                <Panel title="Run stopped">
-                  <p>{statusCopy.FAILED}</p>
-                  <p className="error-message">
-                    {text(state.errors?.at(-1)) ||
-                      "No further error detail was provided."}
-                  </p>
-                  <Details value={state.errors} label="Error history" />
-                </Panel>
-              )}
-              {run.status === "UNVERIFIED" && (
-                <Panel title="No verified candidate">
-                  <p>{statusCopy.UNVERIFIED}</p>
-                </Panel>
+              <TerminalOutcome run={run} animate={completionTransition} />
+              {terminal.has(run.status) && (
+                <div className="report-divider">
+                  <h2>Evidence trail</h2>
+                  <p>Recorded hypotheses, attempts, and evaluation results.</p>
+                </div>
               )}
               <HypothesisList
                 run={run}
@@ -272,6 +291,7 @@ export function RunView({ runId }: { runId: string }) {
               />
               {state.iteration_count || state.validation?.strategy ? (
                 <>
+                  <EvidenceSummary state={state} />
                   <ValidationPanel data={state.validation} />
                   <BenchmarkPanel data={state.benchmark} />
                   <VerificationPanel
@@ -299,6 +319,16 @@ export function RunView({ runId }: { runId: string }) {
                     Approval authorizes ProofPatch to create a GitHub branch,
                     commit, and pull request for this candidate.
                   </p>
+                  <EvidenceSummary state={state} />
+                  <div className="approval-summary">
+                    <h3>Reviewer recommendation</h3>
+                    <p>{state.review?.recommendation ?? "Not provided"}</p>
+                    <h3>Risks / trade-offs</h3>
+                    <p>
+                      {text(state.review?.risks_and_tradeoffs) ||
+                        "No risks reported by the reviewer."}
+                    </p>
+                  </div>
                   <div className="actions">
                     <button
                       disabled={disabled}
@@ -316,54 +346,12 @@ export function RunView({ runId }: { runId: string }) {
                   </div>
                 </Panel>
               )}
-              {(run.status === "CREATING_PR" ||
-                run.status === "COMPLETED" ||
-                pr?.status) && (
-                <Panel
-                  title={
-                    run.status === "COMPLETED"
-                      ? "Pull request created"
-                      : "GitHub publication"
-                  }
-                  label={pr?.status ?? "PENDING"}
-                >
-                  {pr?.number != null && <h3>Pull request #{pr.number}</h3>}
-                  {pr?.branch && (
-                    <p className="mono wrap">
-                      {pr.branch} → {pr.base_branch ?? "—"}
-                    </p>
-                  )}
-                  {pr?.attempt_count != null && (
-                    <p className="muted">
-                      Publication attempt {pr.attempt_count}
-                    </p>
-                  )}
-                  {retryable && (
-                    <>
-                      <p>
-                        GitHub operation failed. The verified patch is preserved
-                        and can be retried.
-                      </p>
-                      <Details value={pr?.last_error} />
-                      <button
-                        disabled={disabled}
-                        onClick={() => void act(() => retryPR(runId))}
-                      >
-                        Retry PR creation
-                      </button>
-                    </>
-                  )}
-                  {prURL && (
-                    <a
-                      className="button"
-                      href={prURL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Open pull request ↗
-                    </a>
-                  )}
-                </Panel>
+              {!terminal.has(run.status) && (
+                <GitHubPublication
+                  run={run}
+                  disabled={disabled}
+                  onRetry={() => void act(() => retryPR(runId))}
+                />
               )}
               {!state.iteration_count &&
                 !state.hypotheses?.length &&
